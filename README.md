@@ -1,4 +1,8 @@
 # go-sitemap-fetcher
+[![Go Reference](https://pkg.go.dev/badge/github.com/kotylevskiy/go-sitemap-fetcher.svg)](https://pkg.go.dev/github.com/kotylevskiy/go-sitemap-fetcher)
+[![Go Report Card](https://goreportcard.com/badge/github.com/kotylevskiy/go-sitemap-fetcher)](https://goreportcard.com/report/github.com/kotylevskiy/go-sitemap-fetcher)
+[![License](https://img.shields.io/github/license/kotylevskiy/go-sitemap-fetcher)](LICENSE)
+
 
 Fast, streaming sitemap walker for Go. It handles sitemap indexes (including nested indexes), gzip-compressed XML, robots.txt rules, and URL filtering **without loading entire sitemaps into memory**, even when they are gzipped.
 
