@@ -1,0 +1,21 @@
+name: "Link issues to project"
+
+on: 
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  repository-projects: write
+
+jobs:
+  link_to_project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add To GitHub projects
+        uses: actions/add-to-project@v1.0.2
+        with:
+          project-url: ${{ vars.PROJECT_TO_LINK_ISSUES_URL }}
+          github-token: ${{ secrets.GH_PROJECTS_ACCESS_TOKEN }}
+          
