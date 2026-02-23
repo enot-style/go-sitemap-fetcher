@@ -65,6 +65,7 @@ Defaults are safe and permissive, with minimal surprises:
 - `MaxDepth`, `MaxSitemaps`, `MaxURLs`: `0` means no limit.
 - `PerRequestTimeout`: `0` means no per-request timeout (caller’s context still applies).
 - `UserAgent`: browser-like user agent when empty.
+- `SkipNon200`: `false` by default. When enabled, non-200 sitemap responses are skipped instead of failing.
 - `IgnoreRobots`: disabled by default (robots.txt respected).
 - `Include`/`Exclude`: nil means include all / exclude none.
 - `Logger`: silenced by default. Set to `slog.New(slog.NewTextHandler(os.Stderr, nil))` to enable logging.
@@ -173,7 +174,7 @@ go run ./cmd/sitemap-fetcher https://www.apple.com/sitemap.xml
 Flags:
 
 - `--max-depth`, `--max-sitemaps`, `--max-urls`
-- `--allow-non-200`
+- `--skip-non-200`
 - `--user-agent`
 - `--timeout` (per-request, e.g. `5s`)
 - `--log-level` (`debug`, `info`, `warn`, `error`)

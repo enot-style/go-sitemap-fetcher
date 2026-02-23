@@ -5,12 +5,14 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -387,4 +389,99 @@ func TestSitemapFetcher_PerRequestTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected timeout error, got nil")
 	}
+}
+
+func TestSitemapFetcher_SkipNon200_WarnsAndSkips(t *testing.T) {
+	const index = `<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>/ok.xml</loc></sitemap>
+  <sitemap><loc>/bad.xml</loc></sitemap>
+</sitemapindex>`
+	const ok = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>/page-ok</loc></url>
+</urlset>`
+
+	server := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.xml":
+			_, _ = w.Write([]byte(index))
+		case "/ok.xml":
+			_, _ = w.Write([]byte(ok))
+		case "/bad.xml":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	indexURL, err := url.Parse(server.URL + "/index.xml")
+	if err != nil {
+		t.Fatalf("failed to parse index URL: %v", err)
+	}
+
+	handler := &captureHandler{}
+	logger := slog.New(handler)
+	fetcher := New(Options{
+		SkipNon200: true,
+		Logger:     logger,
+	})
+
+	items, err := collectItems(fetcher, indexURL)
+	if err != nil {
+		t.Fatalf("walk failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if !strings.HasSuffix(items[0].Loc.String(), "/page-ok") {
+		t.Fatalf("expected /page-ok, got %s", items[0].Loc.String())
+	}
+	if !handler.hasWarningContaining("skipping sitemap due to non-200 response") {
+		t.Fatalf("expected warning about skipped non-200 sitemap")
+	}
+}
+
+type captureHandler struct {
+	mu      sync.Mutex
+	records []capturedRecord
+}
+
+type capturedRecord struct {
+	level slog.Level
+	msg   string
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool {
+	return true
+}
+
+func (h *captureHandler) Handle(_ context.Context, record slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, capturedRecord{
+		level: record.Level,
+		msg:   record.Message,
+	})
+	return nil
+}
+
+func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler {
+	return h
+}
+
+func (h *captureHandler) WithGroup(string) slog.Handler {
+	return h
+}
+
+func (h *captureHandler) hasWarningContaining(message string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, record := range h.records {
+		if record.level == slog.LevelWarn && strings.Contains(record.msg, message) {
+			return true
+		}
+	}
+	return false
 }

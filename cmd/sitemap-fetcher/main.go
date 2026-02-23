@@ -19,7 +19,7 @@ func main() {
 		maxDepth          int
 		maxSitemaps       int
 		maxURLs           int
-		allowNon200       bool
+		skipNon200        bool
 		ignoreRobots      bool
 		userAgent         string
 		perRequestTimeout time.Duration
@@ -57,13 +57,16 @@ func main() {
 			if err != nil {
 				return err
 			}
+			if skipNon200 && strings.TrimSpace(logLevel) == "" && strings.TrimSpace(os.Getenv("GO_SITEMAP_FETCHER_LOG_LEVEL")) == "" {
+				level = slog.LevelWarn
+			}
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
 			fetcher := gositemapfetcher.New(gositemapfetcher.Options{
 				MaxDepth:          maxDepth,
 				MaxSitemaps:       maxSitemaps,
 				MaxURLs:           maxURLs,
-				AllowNon200:       allowNon200,
+				SkipNon200:        skipNon200,
 				IgnoreRobots:      ignoreRobots,
 				UserAgent:         userAgent,
 				PerRequestTimeout: perRequestTimeout,
@@ -81,7 +84,7 @@ func main() {
 	flags.IntVar(&maxDepth, "max-depth", 0, "Maximum sitemap index depth (0 = no limit)")
 	flags.IntVar(&maxSitemaps, "max-sitemaps", 0, "Maximum number of sitemaps to fetch (0 = no limit)")
 	flags.IntVar(&maxURLs, "max-urls", 0, "Maximum number of URLs to yield (0 = no limit)")
-	flags.BoolVar(&allowNon200, "allow-non-200", false, "Skip non-200 sitemaps instead of failing")
+	flags.BoolVar(&skipNon200, "skip-non-200", false, "Skip non-200 sitemaps instead of failing")
 	flags.BoolVar(&ignoreRobots, "ignore-robots", false, "Ignore robots.txt disallow rules")
 	flags.StringVar(&userAgent, "user-agent", "", "User-Agent for HTTP requests")
 	flags.DurationVar(&perRequestTimeout, "timeout", 0, "Per-request timeout (e.g. 5s, 500ms)")

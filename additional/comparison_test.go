@@ -67,7 +67,7 @@ func fetchWithFetcher(site string) (map[string]struct{}, error) {
 	fetcher := gositemapfetcher.New(gositemapfetcher.Options{
 		UserAgent:         "go-sitemap-fetcher/compare",
 		PerRequestTimeout: 15 * time.Second,
-		AllowNon200:       false,
+		SkipNon200:        false,
 	})
 	results := make(map[string]struct{})
 	err = fetcher.Walk(context.Background(), parsed, func(item gositemapfetcher.Item) error {

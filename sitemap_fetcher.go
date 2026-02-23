@@ -35,7 +35,7 @@ type Options struct {
 	MaxDepth          int
 	MaxSitemaps       int
 	MaxURLs           int
-	AllowNon200       bool
+	SkipNon200        bool
 	IgnoreRobots      bool
 	UserAgent         string
 	PerRequestTimeout time.Duration
@@ -434,8 +434,12 @@ func (f *SitemapFetcher) fetchSitemap(ctx context.Context, loc *url.URL, allowMi
 			if cancel != nil {
 				cancel()
 			}
-			if f.opts.AllowNon200 {
-				f.logger.Debug(fmt.Sprintf("non-200 status for %s: %s", loc, resp.Status))
+			if f.opts.SkipNon200 {
+				f.logger.Warn(
+					"skipping sitemap due to non-200 response",
+					"sitemap", loc.String(),
+					"status", resp.Status,
+				)
 				return nil, nil
 			}
 			if allowMissing && resp.StatusCode == http.StatusNotFound {
