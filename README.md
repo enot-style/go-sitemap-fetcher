@@ -66,6 +66,7 @@ Defaults are safe and permissive, with minimal surprises:
 - `PerRequestTimeout`: `0` means no per-request timeout (caller’s context still applies).
 - `UserAgent`: browser-like user agent when empty.
 - `SkipNon200`: `false` by default. When enabled, non-200 sitemap responses are skipped instead of failing.
+- `SkipFetchErrors`: `false` by default. When enabled, sitemap fetch/open errors such as non-2xx status codes, TLS, DNS, connection, and per-request timeout failures are skipped instead of failing.
 - `IgnoreRobots`: disabled by default (robots.txt respected).
 - `Include`/`Exclude`: nil means include all / exclude none.
 - `Logger`: silenced by default. Set to `slog.New(slog.NewTextHandler(os.Stderr, nil))` to enable logging.
@@ -126,7 +127,7 @@ go test ./...
 Generates a 10M-URL sitemap stream and validates that parsing stays efficient.
 
 ```bash
-GO_SITEMAP_FETCHER_LONG=1 go test -tags long ./...
+GO_SITEMAP_FETCHER_LONG=1 go test -v -tags long ./...
 ```
 
 ### Integration comparisons with other tools
@@ -134,7 +135,7 @@ GO_SITEMAP_FETCHER_LONG=1 go test -tags long ./...
 The `additional` package compares this fetcher against other popular sitemap parsers on real websites. These tests require network access and may take a while (some dependencies introduce throttling delays).
 
 ```bash
-GO_SITEMAP_FETCHER_INTEGRATION=1 go test -tags integration ./additional
+GO_SITEMAP_FETCHER_INTEGRATION=1 go test -C additional -tags integration -v .
 ```
 
 Interpretation:
@@ -175,6 +176,7 @@ Flags:
 
 - `--max-depth`, `--max-sitemaps`, `--max-urls`
 - `--skip-non-200`
+- `--skip-fetch-errors`
 - `--user-agent`
 - `--timeout` (per-request, e.g. `5s`)
 - `--log-level` (`debug`, `info`, `warn`, `error`)

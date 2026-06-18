@@ -36,6 +36,7 @@ type Options struct {
 	MaxSitemaps       int
 	MaxURLs           int
 	SkipNon200        bool
+	SkipFetchErrors   bool
 	IgnoreRobots      bool
 	UserAgent         string
 	PerRequestTimeout time.Duration
@@ -141,6 +142,14 @@ func (f *SitemapFetcher) Walk(ctx context.Context, website *url.URL, yield func(
 
 		reader, err := f.fetchSitemap(ctx, current.loc, current.allowMissing)
 		if err != nil {
+			if f.shouldSkipSitemapError(ctx, err) {
+				f.logger.Warn(
+					"skipping sitemap due to fetch error",
+					"sitemap", current.loc.String(),
+					"error", err.Error(),
+				)
+				continue
+			}
 			return err
 		}
 		if reader == nil {
@@ -208,6 +217,16 @@ func (f *SitemapFetcher) Walk(ctx context.Context, website *url.URL, yield func(
 	}
 
 	return nil
+}
+
+func (f *SitemapFetcher) shouldSkipSitemapError(ctx context.Context, err error) bool {
+	if !f.opts.SkipFetchErrors || err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	return true
 }
 
 // ===================== Internal Types =====================

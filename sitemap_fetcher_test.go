@@ -443,6 +443,67 @@ func TestSitemapFetcher_SkipNon200_WarnsAndSkips(t *testing.T) {
 	}
 }
 
+func TestSitemapFetcher_SkipFetchErrors_WarnsAndSkips(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to reserve local port: %v", err)
+	}
+	badSitemapURL := "http://" + listener.Addr().String() + "/bad.xml"
+	if err := listener.Close(); err != nil {
+		t.Fatalf("failed to close local listener: %v", err)
+	}
+
+	const ok = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>/page-ok</loc></url>
+</urlset>`
+
+	var index string
+	server := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.xml":
+			_, _ = w.Write([]byte(index))
+		case "/ok.xml":
+			_, _ = w.Write([]byte(ok))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	index = `<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>` + server.URL + `/ok.xml</loc></sitemap>
+  <sitemap><loc>` + badSitemapURL + `</loc></sitemap>
+</sitemapindex>`
+
+	indexURL, err := url.Parse(server.URL + "/index.xml")
+	if err != nil {
+		t.Fatalf("failed to parse index URL: %v", err)
+	}
+
+	handler := &captureHandler{}
+	logger := slog.New(handler)
+	fetcher := New(Options{
+		SkipFetchErrors: true,
+		Logger:          logger,
+	})
+
+	items, err := collectItems(fetcher, indexURL)
+	if err != nil {
+		t.Fatalf("walk failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if !strings.HasSuffix(items[0].Loc.String(), "/page-ok") {
+		t.Fatalf("expected /page-ok, got %s", items[0].Loc.String())
+	}
+	if !handler.hasWarningContaining("skipping sitemap due to fetch error") {
+		t.Fatalf("expected warning about skipped fetch error")
+	}
+}
+
 type captureHandler struct {
 	mu      sync.Mutex
 	records []capturedRecord

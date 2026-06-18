@@ -5,8 +5,10 @@ package additional
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -24,6 +26,11 @@ func TestComparison_RealWebsites(t *testing.T) {
 		t.Skip("set GO_SITEMAP_FETCHER_INTEGRATION=1 to run")
 	}
 
+	var summaries []comparisonSummary
+	t.Cleanup(func() {
+		printComparisonSummary(t, summaries)
+	})
+
 	sites := []string{
 		"https://www.apple.com/sitemap.xml",
 		"https://www.jetbrains.com/sitemap.xml",
@@ -33,30 +40,61 @@ func TestComparison_RealWebsites(t *testing.T) {
 	for _, site := range sites {
 		site := site
 		t.Run(site, func(t *testing.T) {
-			ours, err := fetchWithFetcher(site)
+			ours, metrics, err := measureFetch(func() (map[string]struct{}, error) {
+				return fetchWithFetcher(site)
+			})
 			if err != nil {
 				t.Fatalf("fetcher failed: %v", err)
 			}
+			summaries = append(summaries, comparisonSummary{
+				Site:    site,
+				Tool:    "★go-sitemap-fetcher",
+				URLs:    len(ours),
+				Metrics: metrics,
+			})
 
-			parserURLs, err := fetchWithAafeher(site)
+			parserURLs, metrics, err := measureFetch(func() (map[string]struct{}, error) {
+				return fetchWithAafeher(site)
+			})
 			if err != nil {
 				t.Fatalf("go-sitemap-parser failed: %v", err)
 			}
-			compareSets(t, "go-sitemap-parser", ours, parserURLs)
+			recordComparison(t, &summaries, site, "go-sitemap-parser", ours, parserURLs, metrics)
 
-			gopherURLs, err := fetchWithGopher(site)
+			gopherURLs, metrics, err := measureFetch(func() (map[string]struct{}, error) {
+				return fetchWithGopher(site)
+			})
 			if err != nil {
 				t.Fatalf("gopher-parse-sitemap failed: %v", err)
 			}
-			compareSets(t, "gopher-parse-sitemap", ours, gopherURLs)
+			recordComparison(t, &summaries, site, "gopher-parse-sitemap", ours, gopherURLs, metrics)
 
-			megaURLs, err := fetchWithMega(site)
+			megaURLs, metrics, err := measureFetch(func() (map[string]struct{}, error) {
+				return fetchWithMega(site)
+			})
 			if err != nil {
 				t.Fatalf("sitemap-go failed: %v", err)
 			}
-			compareSets(t, "sitemap-go", ours, megaURLs)
+			recordComparison(t, &summaries, site, "sitemap-go", ours, megaURLs, metrics)
 		})
 	}
+}
+
+type comparisonSummary struct {
+	Site    string
+	Tool    string
+	URLs    int
+	Missing int
+	Extra   int
+	Metrics fetchMetrics
+}
+
+type fetchMetrics struct {
+	Elapsed     time.Duration
+	AllocKB     uint64
+	HeapInuseKB int64
+	SysKB       int64
+	HeapObjects uint64
 }
 
 func fetchWithFetcher(site string) (map[string]struct{}, error) {
@@ -148,9 +186,20 @@ func normalizeURLString(raw string) string {
 	return parsed.String()
 }
 
-func compareSets(t *testing.T, label string, ours, other map[string]struct{}) {
+func recordComparison(t *testing.T, summaries *[]comparisonSummary, site, label string, ours, other map[string]struct{}, metrics fetchMetrics) {
+	t.Helper()
+
 	missing := diffSet(ours, other)
 	extra := diffSet(other, ours)
+	*summaries = append(*summaries, comparisonSummary{
+		Site:    site,
+		Tool:    label,
+		URLs:    len(other),
+		Missing: len(missing),
+		Extra:   len(extra),
+		Metrics: metrics,
+	})
+
 	if len(missing) == 0 && len(extra) == 0 {
 		return
 	}
@@ -158,7 +207,72 @@ func compareSets(t *testing.T, label string, ours, other map[string]struct{}) {
 	missingSample := sampleStrings(missing, 5)
 	extraSample := sampleStrings(extra, 5)
 
-	t.Fatalf("comparison mismatch for %s: missing=%d extra=%d missing_sample=%v extra_sample=%v", label, len(missing), len(extra), missingSample, extraSample)
+	t.Errorf("comparison mismatch for %s: missing=%d extra=%d missing_sample=%v extra_sample=%v", label, len(missing), len(extra), missingSample, extraSample)
+}
+
+func measureFetch(fetch func() (map[string]struct{}, error)) (map[string]struct{}, fetchMetrics, error) {
+	runtime.GC()
+
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	start := time.Now()
+	urls, err := fetch()
+
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(urls)
+
+	metrics := fetchMetrics{
+		Elapsed:     time.Since(start),
+		AllocKB:     bytesToKB(after.TotalAlloc - before.TotalAlloc),
+		HeapInuseKB: signedBytesToKB(after.HeapInuse, before.HeapInuse),
+		SysKB:       signedBytesToKB(after.Sys, before.Sys),
+	}
+	if after.HeapObjects >= before.HeapObjects {
+		metrics.HeapObjects = after.HeapObjects - before.HeapObjects
+	}
+	return urls, metrics, err
+}
+
+func printComparisonSummary(t *testing.T, summaries []comparisonSummary) {
+	t.Helper()
+
+	if len(summaries) == 0 {
+		return
+	}
+
+	var b strings.Builder
+	fmt.Fprintln(&b, "comparison summary:")
+	fmt.Fprintf(&b, "%-43s  %-22s  %10s  %10s  %10s  %10s  %11s  %10s  %8s  %12s\n", "site", "tool", "urls", "missing", "extra", "elapsed", "alloc_kb", "heap_kb", "sys_kb", "heap_objects")
+	for _, summary := range summaries {
+		fmt.Fprintf(
+			&b,
+			"%-43s  %-22s  %10d  %10d  %10d  %10s  %11d  %10d  %8d  %12d\n",
+			summary.Site,
+			summary.Tool,
+			summary.URLs,
+			summary.Missing,
+			summary.Extra,
+			summary.Metrics.Elapsed.Truncate(time.Millisecond),
+			summary.Metrics.AllocKB,
+			summary.Metrics.HeapInuseKB,
+			summary.Metrics.SysKB,
+			summary.Metrics.HeapObjects,
+		)
+	}
+	t.Log("\n" + strings.TrimRight(b.String(), "\n"))
+}
+
+func bytesToKB(bytes uint64) uint64 {
+	return bytes / 1024
+}
+
+func signedBytesToKB(after, before uint64) int64 {
+	if after >= before {
+		return int64((after - before) / 1024)
+	}
+	return -int64((before - after) / 1024)
 }
 
 func diffSet(left, right map[string]struct{}) []string {
