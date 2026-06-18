@@ -441,6 +441,23 @@ func TestSitemapFetcher_SkipNon200_WarnsAndSkips(t *testing.T) {
 	if !handler.hasWarningContaining("skipping sitemap due to non-200 response") {
 		t.Fatalf("expected warning about skipped non-200 sitemap")
 	}
+	if got := fetcher.SkippedSitemapCount(); got != 1 {
+		t.Fatalf("expected 1 skipped sitemap, got %d", got)
+	}
+	skipped := fetcher.SkippedSitemaps()
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 skipped sitemap detail, got %d", len(skipped))
+	}
+	if !strings.HasSuffix(skipped[0].URL, "/bad.xml") {
+		t.Fatalf("expected skipped /bad.xml, got %q", skipped[0].URL)
+	}
+	var statusErr *ErrHTTPStatus
+	if !errors.As(skipped[0].Err, &statusErr) {
+		t.Fatalf("expected ErrHTTPStatus, got %T", skipped[0].Err)
+	}
+	if statusErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, statusErr.StatusCode)
+	}
 }
 
 func TestSitemapFetcher_SkipFetchErrors_WarnsAndSkips(t *testing.T) {
@@ -501,6 +518,76 @@ func TestSitemapFetcher_SkipFetchErrors_WarnsAndSkips(t *testing.T) {
 	}
 	if !handler.hasWarningContaining("skipping sitemap due to fetch error") {
 		t.Fatalf("expected warning about skipped fetch error")
+	}
+	if got := fetcher.SkippedSitemapCount(); got != 1 {
+		t.Fatalf("expected 1 skipped sitemap, got %d", got)
+	}
+	skipped := fetcher.SkippedSitemaps()
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 skipped sitemap detail, got %d", len(skipped))
+	}
+	if skipped[0].URL != badSitemapURL {
+		t.Fatalf("expected skipped URL %q, got %q", badSitemapURL, skipped[0].URL)
+	}
+	if skipped[0].Err == nil {
+		t.Fatalf("expected skipped error")
+	}
+}
+
+func TestSitemapFetcher_SkippedSitemaps_ResetBetweenWalks(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to reserve local port: %v", err)
+	}
+	badSitemapURL := "http://" + listener.Addr().String() + "/bad.xml"
+	if err := listener.Close(); err != nil {
+		t.Fatalf("failed to close local listener: %v", err)
+	}
+
+	const ok = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>/page-ok</loc></url>
+</urlset>`
+
+	server := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/bad-index.xml":
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>` + badSitemapURL + `</loc></sitemap>
+</sitemapindex>`))
+		case "/ok.xml":
+			_, _ = w.Write([]byte(ok))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	badIndexURL, err := url.Parse(server.URL + "/bad-index.xml")
+	if err != nil {
+		t.Fatalf("failed to parse bad index URL: %v", err)
+	}
+	okURL, err := url.Parse(server.URL + "/ok.xml")
+	if err != nil {
+		t.Fatalf("failed to parse ok URL: %v", err)
+	}
+
+	fetcher := New(Options{SkipFetchErrors: true})
+	_, err = collectItems(fetcher, badIndexURL)
+	if err != nil {
+		t.Fatalf("bad index walk failed: %v", err)
+	}
+	if got := fetcher.SkippedSitemapCount(); got != 1 {
+		t.Fatalf("expected 1 skipped sitemap, got %d", got)
+	}
+
+	_, err = collectItems(fetcher, okURL)
+	if err != nil {
+		t.Fatalf("ok walk failed: %v", err)
+	}
+	if got := fetcher.SkippedSitemapCount(); got != 0 {
+		t.Fatalf("expected skipped sitemap stats to reset, got %d", got)
 	}
 }
 

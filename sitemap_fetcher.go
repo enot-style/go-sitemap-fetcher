@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/temoto/robotstxt"
@@ -48,9 +49,29 @@ type Options struct {
 
 // SitemapFetcher streams sitemap URLs and implements SitemapWalker.
 type SitemapFetcher struct {
-	opts   Options
-	client *http.Client
-	logger *slog.Logger
+	opts         Options
+	client       *http.Client
+	logger       *slog.Logger
+	statsMu      sync.Mutex
+	skippedStats []SkippedSitemap
+}
+
+type skippedSitemapError struct {
+	err error
+}
+
+func (e *skippedSitemapError) Error() string {
+	if e == nil || e.err == nil {
+		return "skipped sitemap"
+	}
+	return e.err.Error()
+}
+
+func (e *skippedSitemapError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
 }
 
 // ===================== Public API =====================
@@ -81,6 +102,7 @@ func (f *SitemapFetcher) Walk(ctx context.Context, website *url.URL, yield func(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	f.resetStats()
 
 	inputURL, baseURL, err := normalizeInputURL(website)
 	if err != nil {
@@ -142,7 +164,13 @@ func (f *SitemapFetcher) Walk(ctx context.Context, website *url.URL, yield func(
 
 		reader, err := f.fetchSitemap(ctx, current.loc, current.allowMissing)
 		if err != nil {
+			var skipped *skippedSitemapError
+			if errors.As(err, &skipped) {
+				f.recordSkippedSitemap(current.loc, skipped.err)
+				continue
+			}
 			if f.shouldSkipSitemapError(ctx, err) {
+				f.recordSkippedSitemap(current.loc, err)
 				f.logger.Warn(
 					"skipping sitemap due to fetch error",
 					"sitemap", current.loc.String(),
@@ -217,6 +245,36 @@ func (f *SitemapFetcher) Walk(ctx context.Context, website *url.URL, yield func(
 	}
 
 	return nil
+}
+
+// SkippedSitemaps returns sitemap fetch/open errors skipped during the last Walk.
+func (f *SitemapFetcher) SkippedSitemaps() []SkippedSitemap {
+	f.statsMu.Lock()
+	defer f.statsMu.Unlock()
+	return append([]SkippedSitemap(nil), f.skippedStats...)
+}
+
+// SkippedSitemapCount returns the number of sitemap fetch/open errors skipped during the last Walk.
+func (f *SitemapFetcher) SkippedSitemapCount() int {
+	f.statsMu.Lock()
+	defer f.statsMu.Unlock()
+	return len(f.skippedStats)
+}
+
+func (f *SitemapFetcher) resetStats() {
+	f.statsMu.Lock()
+	defer f.statsMu.Unlock()
+	f.skippedStats = nil
+}
+
+func (f *SitemapFetcher) recordSkippedSitemap(loc *url.URL, err error) {
+	f.statsMu.Lock()
+	defer f.statsMu.Unlock()
+	entry := SkippedSitemap{Err: err}
+	if loc != nil {
+		entry.URL = loc.String()
+	}
+	f.skippedStats = append(f.skippedStats, entry)
 }
 
 func (f *SitemapFetcher) shouldSkipSitemapError(ctx context.Context, err error) bool {
@@ -459,7 +517,7 @@ func (f *SitemapFetcher) fetchSitemap(ctx context.Context, loc *url.URL, allowMi
 					"sitemap", loc.String(),
 					"status", resp.Status,
 				)
-				return nil, nil
+				return nil, &skippedSitemapError{err: &ErrHTTPStatus{URL: loc, StatusCode: resp.StatusCode, Status: resp.Status}}
 			}
 			if allowMissing && resp.StatusCode == http.StatusNotFound {
 				f.logger.Debug(fmt.Sprintf("sitemap not found (probe) %s", loc))

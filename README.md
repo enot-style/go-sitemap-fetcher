@@ -6,7 +6,7 @@
 
 Fast, streaming sitemap walker for Go. It handles sitemap indexes (including nested indexes), gzip-compressed XML, robots.txt rules, and URL filtering **without loading entire sitemaps into memory**, even when they are gzipped.
 
-It is designed for speed and low memory usage. For example, processing the full wikipedia.org sitemap index stays around ~10 MB of RAM in the long test.
+It is designed for speed and low memory usage. For example, processing the full Wikipedia.org sitemap index stays around ~10 MB of RAM in the long test.
 
 ## Why this fetcher
 
@@ -24,8 +24,16 @@ Other parsers are great for specific tasks, but many focus on parsing a single s
 
 ## Install
 
+Install it as a dependency in your project:
+
 ```bash
 go get github.com/enot-style/go-sitemap-fetcher
+```
+
+If you want to use it as a CLI tool:
+
+```bash
+go install github.com/enot-style/go-sitemap-fetcher/cmd/sitemap-fetcher@latest
 ```
 
 ## Quickstart
@@ -114,6 +122,32 @@ fetcher := gositemapfetcher.New(gositemapfetcher.Options{
 })
 ```
 
+### Inspect skipped sitemaps
+
+When `SkipNon200` or `SkipFetchErrors` is enabled, skipped sitemap files are available after `Walk`:
+
+```go
+fetcher := gositemapfetcher.New(gositemapfetcher.Options{
+	SkipNon200:      true,
+	SkipFetchErrors: true,
+})
+
+err := fetcher.Walk(context.Background(), website, func(item gositemapfetcher.Item) error {
+	fmt.Println(item.Loc.String())
+	return nil
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+fmt.Printf("skipped %d sitemap files\n", fetcher.SkippedSitemapCount())
+for _, skipped := range fetcher.SkippedSitemaps() {
+	fmt.Printf("skipped %s: %v\n", skipped.URL, skipped.Err)
+}
+```
+
+`SkippedSitemaps` is reset at the beginning of each `Walk`. For `SkipNon200`, the stored error is `*ErrHTTPStatus`, so callers can inspect the HTTP status code with `errors.As`.
+
 ## Tests
 
 Run unit tests:
@@ -184,4 +218,4 @@ Flags:
 
 Environment:
 
-- `GO_SITEMAP_FETCHER_LOG_LEVEL` sets the log level (same values as `--log-level`, default `error`, set to `debug` to see discarded by robots.txt urls, sitemaps, etc).
+- `GO_SITEMAP_FETCHER_LOG_LEVEL` sets the log level (same values as `--log-level`; default: `error`; set to `debug` to see URLs, sitemaps, and other entries discarded by robots.txt).

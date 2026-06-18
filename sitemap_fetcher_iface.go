@@ -20,3 +20,9 @@ type Item struct {
 	Priority   *float64
 	Sitemap    *url.URL
 }
+
+// SkippedSitemap describes a sitemap fetch/open failure skipped by SkipNon200 or SkipFetchErrors.
+type SkippedSitemap struct {
+	URL string
+	Err error
+}
